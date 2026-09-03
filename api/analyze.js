@@ -1,318 +1,92 @@
-import crypto from "crypto";
-
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "openai/gpt-oss-20b";
-
-function cleanText(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function compressChat(text) {
-  const lines = text
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .filter(line => !line.includes("<Media omitted>"))
-    .filter(line => !line.includes("Messages and calls are end-to-end encrypted"));
-
-  const joined = lines.join("\n");
-
-  if (joined.length <= 7000) {
-    return joined;
-  }
-
-  const first = joined.slice(0, 2500);
-  const middleStart = Math.floor(joined.length / 2) - 1250;
-  const middle = joined.slice(Math.max(0, middleStart), middleStart + 2500);
-  const last = joined.slice(-2000);
-
-  return `${first}\n\n[...middle...]\n\n${middle}\n\n[...recent...]\n\n${last}`;
-}
-
-async function redisCommand(command) {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-
-  if (!url || !token) {
-    throw new Error("Upstash environment variables are missing.");
-  }
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(command)
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Redis error: ${text}`);
-  }
-
-  return response.json();
-}
-
-function extractJSON(text) {
-  let cleaned = text.trim();
-
-  cleaned = cleaned
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-
-  if (start === -1 || end === -1) {
-    throw new Error("AI returned invalid JSON.");
-  }
-
-  return JSON.parse(cleaned.slice(start, end + 1));
-}
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({
-      success: false,
-      error: "Method not allowed"
-    });
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    const body = req.body || {};
+    const { exName, chatText, premium = false } = req.body || {};
 
-    // Accept both names to avoid frontend/API mismatch
-    const exName = cleanText(body.exName || body.personName || "Unknown");
-    const chatText = cleanText(body.chatText || body.message || "");
-
-    if (!chatText) {
-      return res.status(400).json({
-        success: false,
-        error: "Chat text is required."
-      });
+    if (!chatText || chatText.trim().length < 20) {
+      return res.status(400).json({ error: "Please provide a WhatsApp chat." });
     }
 
-    const groqKey = process.env.GROQ_API_KEY;
-
-    if (!groqKey) {
+    if (!process.env.GROQ_API_KEY) {
       return res.status(500).json({
-        success: false,
-        error: "GROQ_API_KEY is missing."
+        error: "GROQ_API_KEY is missing. Add it in Vercel → Settings → Environment Variables."
       });
-    }
-
-    const compressedChat = compressChat(chatText);
-
-    const chatHash = crypto
-      .createHash("sha256")
-      .update(chatText)
-      .digest("hex");
-
-    const analysisKey = `chatback:analysis:${chatHash}`;
-    const personalityKey = `chatback:personality:${chatHash}`;
-
-    // Check cache
-    try {
-      const cachedAnalysis = await redisCommand([
-        "GET",
-        analysisKey
-      ]);
-
-      const cachedPersonality = await redisCommand([
-        "GET",
-        personalityKey
-      ]);
-
-      if (
-        cachedAnalysis?.result &&
-        cachedPersonality?.result
-      ) {
-        let personality = cachedPersonality.result;
-
-        try {
-          personality = JSON.parse(personality);
-        } catch {
-          // Keep as string
-        }
-
-        return res.status(200).json({
-          success: true,
-          result: cachedAnalysis.result,
-          personality,
-          cached: true
-        });
-      }
-    } catch (cacheError) {
-      console.log("CACHE READ ERROR:", cacheError.message);
     }
 
     const prompt = `
-You are CHATBACK, a WhatsApp relationship chat analyzer.
+You are CHATBACK, an AI relationship chat analyzer.
 
-The user wants to understand the communication style of "${exName}".
+Person being analyzed: ${exName || "Unknown"}
 
-Analyze ONLY the provided WhatsApp chat.
-Do not invent facts.
-Do not diagnose mental health conditions.
-Do not claim to know private thoughts.
+Analyze the WhatsApp conversation below. Never claim that you can know someone's private feelings with certainty. Describe conclusions as patterns inferred from the text.
 
-Return ONLY valid JSON.
+For FREE analysis provide:
+1. Short relationship summary
+2. Who appears to initiate more
+3. Emotional tone
+4. Main communication pattern
+5. Overall connection score /100
 
-Required format:
+${premium ? `
+For PREMIUM analysis also provide:
+6. Who appears more emotionally invested and why
+7. Attachment indicators
+8. Red flags
+9. Green flags
+10. Communication compatibility
+11. Detailed relationship insight
+12. Suggested next reply
+13. Final takeaway
+` : ""}
 
-{
-  "analysis": "relationship analysis",
-  "personality": {
-    "language": "",
-    "reply_length": "",
-    "tone": "",
-    "emoji_style": "",
-    "humour": "",
-    "affection_style": "",
-    "question_style": "",
-    "communication_style": "",
-    "common_expressions": "",
-    "important_notes": ""
-  }
-}
-
-For analysis include:
-- relationship summary
-- who initiates more
-- emotional tone
-- interest signals
-- green flags
-- red flags
-- communication pattern
-- connection score from 0 to 100
-- final takeaway
-
-For personality identify:
-- Tamil / English / Tanglish / Mixed
-- typical reply length
-- tone
-- emoji usage
-- humour
-- affection style
-- question style
-- communication style
-- actual common expressions found in the chat
-- important communication patterns
-
-Do not invent expressions that are not present.
-
-Person name:
-${exName}
+Keep the answer readable with headings and bullet points.
 
 WhatsApp chat:
-${compressedChat}
+${String(chatText).slice(0, 50000)}
 `;
 
-    const groqResponse = await fetch(GROQ_URL, {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${groqKey}`,
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: "llama-3.3-70b-versatile",
         messages: [
           {
-            role: "user",
-            content: prompt
-          }
+            role: "system",
+            content: "You are CHATBACK. Be clear, concise and emotionally neutral."
+          },
+          { role: "user", content: prompt }
         ],
-        temperature: 0.4,
-        max_tokens: 900
+        temperature: 0.7,
+        max_tokens: premium ? 3500 : 1000
       })
     });
 
-    const groqText = await groqResponse.text();
+    const data = await response.json();
 
-    if (!groqResponse.ok) {
-      console.error("GROQ ERROR:", groqText);
-
-      return res.status(groqResponse.status).json({
-        success: false,
-        error: "Groq API error.",
-        details: groqText
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: data?.error?.message || "Groq request failed."
       });
     }
 
-    let groqData;
+    const result = data?.choices?.[0]?.message?.content;
 
-    try {
-      groqData = JSON.parse(groqText);
-    } catch {
-      return res.status(502).json({
-        success: false,
-        error: "Invalid response from Groq."
-      });
+    if (!result) {
+      return res.status(502).json({ error: "AI returned an empty response." });
     }
 
-    const content =
-      groqData?.choices?.[0]?.message?.content || "";
-
-    if (!content) {
-      return res.status(502).json({
-        success: false,
-        error: "Groq returned an empty response."
-      });
-    }
-
-    let parsed;
-
-    try {
-      parsed = extractJSON(content);
-    } catch (jsonError) {
-      console.error("JSON PARSE ERROR:", content);
-
-      return res.status(502).json({
-        success: false,
-        error: "AI returned an invalid analysis."
-      });
-    }
-
-    const analysis = parsed.analysis || "No analysis available.";
-    const personality = parsed.personality || {};
-
-    // Save only analysis + personality
-    try {
-      await redisCommand([
-        "SET",
-        analysisKey,
-        analysis,
-        "EX",
-        "2592000"
-      ]);
-
-      await redisCommand([
-        "SET",
-        personalityKey,
-        JSON.stringify(personality),
-        "EX",
-        "2592000"
-      ]);
-    } catch (cacheError) {
-      console.log("CACHE WRITE ERROR:", cacheError.message);
-    }
-
-    return res.status(200).json({
-      success: true,
-      result: analysis,
-      personality,
-      cached: false
-    });
-
+    return res.status(200).json({ success: true, result });
   } catch (error) {
-    console.error("ANALYZE ERROR:", error);
-
+    console.error(error);
     return res.status(500).json({
-      success: false,
-      error: error.message || "Analysis failed."
+      error: "Server error. Please try again."
     });
   }
 }
