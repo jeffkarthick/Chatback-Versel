@@ -136,73 +136,77 @@ export default function App() {
   }
 
   // SEND CHAT MESSAGE
-  async function sendChatMessage() {
-    const message = chatInput.trim();
+async function sendChatMessage() {
+  const message = chatInput.trim();
 
-    if (!message || chatLoading) return;
+  if (!message || chatLoading) return;
 
-    const userMessage = {
-      role: "user",
-      text: message
-    };
+  const userMessage = {
+    role: "user",
+    text: message
+  };
+
+  const updatedMessages = [
+    ...messages,
+    userMessage
+  ];
+
+  setMessages(updatedMessages);
+  setChatInput("");
+  setChatLoading(true);
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json"
+      },
+
+      body: JSON.stringify({
+        message,
+        personName: exName.trim(),
+        personality: personality,
+        analysis: result,
+        history: updatedMessages
+      })
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(
+        data.error || "Chat failed."
+      );
+    }
 
     setMessages(prev => [
       ...prev,
-      userMessage
+      {
+        role: "ai",
+        text:
+          data.reply ||
+          "I'm not sure what to say right now."
+      }
     ]);
 
-    setChatInput("");
-    setChatLoading(true);
+  } catch (err) {
 
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          message,
-          personName: exName.trim(),
+    console.error("CHAT ERROR:", err);
 
-          // Existing analysis is sent as context.
-          // Original WhatsApp chat is NOT sent again.
-          analysis: result
-        })
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(
-          data.error || "Chat failed."
-        );
+    setMessages(prev => [
+      ...prev,
+      {
+        role: "ai",
+        text:
+          "Sorry, AI is temporarily busy. Try again in a few seconds."
       }
+    ]);
 
-      setMessages(prev => [
-        ...prev,
-        {
-          role: "ai",
-          text:
-            data.reply ||
-            "I'm not sure what to say right now."
-        }
-      ]);
-
-    } catch (err) {
-
-      setMessages(prev => [
-        ...prev,
-        {
-          role: "ai",
-          text:
-            "Sorry, AI is temporarily busy. Try again in a few seconds."
-        }
-      ]);
-
-    } finally {
-      setChatLoading(false);
-    }
+  } finally {
+    setChatLoading(false);
   }
+}
 
   function handleChatKeyDown(e) {
     if (e.key === "Enter" && !e.shiftKey) {
