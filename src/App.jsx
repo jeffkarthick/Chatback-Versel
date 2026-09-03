@@ -1,53 +1,70 @@
-import { useState } from "react";
-import "./App.css";
+import React, { useMemo, useState } from "react";
+
+const DEMO_CHAT = `12/08/2026, 9:10 PM - Alex: Hey, how are you?
+12/08/2026, 9:12 PM - You: I'm good. What about you?
+12/08/2026, 9:13 PM - Alex: Good. I was thinking about you today.
+12/08/2026, 9:15 PM - You: Really? 😊
+12/08/2026, 9:16 PM - Alex: Yeah, our old conversations came to mind.`;
+
 export default function App() {
   const [exName, setExName] = useState("");
   const [chatText, setChatText] = useState("");
   const [result, setResult] = useState("");
-  const [personality, setPersonality] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [premium, setPremium] = useState(false);
+  const [paid, setPaid] = useState(false);
+
+  // CHAT SCREEN
   const [screen, setScreen] = useState("home");
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
-  // =========================
-  // FILE UPLOAD
-  // =========================
+
+  const canAnalyze = useMemo(
+    () => exName.trim().length > 0 && chatText.trim().length > 20,
+    [exName, chatText]
+  );
+
+  function loadDemo() {
+    setExName("Alex");
+    setChatText(DEMO_CHAT);
+    setResult("");
+    setError("");
+    setScreen("home");
+  }
+
   function handleFile(e) {
     const file = e.target.files?.[0];
+
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".txt")) {
-      setError("Please upload a WhatsApp .txt chat file.");
-      return;
-    }
+
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setChatText(event.target.result || "");
-      setError("");
+
+    reader.onload = () => {
+      setChatText(String(reader.result || ""));
     };
+
     reader.onerror = () => {
-      setError("Could not read the file.");
+      setError("Could not read that file.");
     };
+
     reader.readAsText(file);
   }
-  // =========================
-  // ANALYZE
-  // =========================
-  async function analyze() {
+
+  async function analyze(isPremium = false) {
+    if (!exName.trim()) {
+      return setError("Enter the person's name first.");
+    }
+
+    if (!chatText.trim()) {
+      return setError("Paste or upload your WhatsApp chat.");
+    }
+
+    setLoading(true);
     setError("");
     setResult("");
-    const name = exName.trim();
-    const chat = chatText.trim();
-    if (!name) {
-      setError("Please enter the person's name.");
-      return;
-    }
-    if (!chat) {
-      setError("Please upload or paste the WhatsApp chat.");
-      return;
-    }
-    setLoading(true);
+
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
@@ -55,65 +72,86 @@ export default function App() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          exName: name,
-          chatText: chat
+          exName: exName.trim(),
+          chatText,
+          premium: isPremium
         })
       });
+
       const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
         throw new Error(
-          data.error ||
-          data.details ||
-          "Analysis failed."
+          data.error || "Analysis failed."
         );
       }
-      setResult(data.result || "No analysis returned.");
-      setPersonality(data.personality || null);
-      // Start fresh chat
-      setMessages([]);
-      setChatInput("");
-      setScreen("result");
+
+      setResult(
+        data.result || "No result returned."
+      );
+
+      setPremium(isPremium);
+
     } catch (err) {
-      console.error("ANALYZE ERROR:", err);
       setError(
         err.message ||
-        "Something went wrong. Please try again."
+        "Something went wrong."
       );
+
     } finally {
       setLoading(false);
     }
   }
-  // =========================
-  // OPEN CHAT
-  // =========================
+
+  async function unlockPremium() {
+    const ok = window.confirm(
+      "Premium Analysis — ₹49\n\nThis demo will unlock the premium UI without charging you.\nConnect a payment gateway before launch."
+    );
+
+    if (!ok) return;
+
+    setPaid(true);
+
+    await analyze(true);
+  }
+
+  // OPEN CHAT SCREEN
   function openChat() {
-    const name = exName.trim() || "Them";
+    const name = exName.trim();
+
+    if (!name) return;
+
     setMessages([
       {
         role: "ai",
         text: `Hey 👋 I'm ${name}. What's on your mind?`
       }
     ]);
+
     setChatInput("");
+    setError("");
     setScreen("chat");
   }
-  // =========================
+
   // SEND CHAT MESSAGE
-  // =========================
   async function sendChatMessage() {
     const message = chatInput.trim();
+
     if (!message || chatLoading) return;
+
     const userMessage = {
       role: "user",
       text: message
     };
-    const updatedMessages = [
-      ...messages,
+
+    setMessages(prev => [
+      ...prev,
       userMessage
-    ];
-    setMessages(updatedMessages);
+    ]);
+
     setChatInput("");
     setChatLoading(true);
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -121,22 +159,24 @@ export default function App() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          message: message,
+          message,
           personName: exName.trim(),
-          personality: personality,
-          analysis: result,
-          history: updatedMessages
+
+          // Existing analysis is sent as context.
+          // Original WhatsApp chat is NOT sent again.
+          analysis: result
         })
       });
+
       const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
         throw new Error(
-          data.error ||
-          data.details ||
-          "Chat failed."
+          data.error || "Chat failed."
         );
       }
-      setMessages((prev) => [
+
+      setMessages(prev => [
         ...prev,
         {
           role: "ai",
@@ -145,9 +185,10 @@ export default function App() {
             "I'm not sure what to say right now."
         }
       ]);
+
     } catch (err) {
-      console.error("CHAT ERROR:", err);
-      setMessages((prev) => [
+
+      setMessages(prev => [
         ...prev,
         {
           role: "ai",
@@ -155,214 +196,320 @@ export default function App() {
             "Sorry, AI is temporarily busy. Try again in a few seconds."
         }
       ]);
+
     } finally {
       setChatLoading(false);
     }
   }
-  // =========================
-  // ENTER KEY
-  // =========================
+
   function handleChatKeyDown(e) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendChatMessage();
     }
   }
-  // =========================
-  // HOME SCREEN
-  // =========================
-  if (screen === "home") {
-    return (
-      <div className="app">
-        <div className="container">
-          <div className="logo">
-            CHAT<span>BACK</span>
-          </div>
-          <h1>
-            Understand the chat.
-            <br />
-            <span>Understand them.</span>
-          </h1>
-          <p className="subtitle">
-            Upload your WhatsApp conversation and discover
-            communication patterns, emotions and connection.
-          </p>
-          <div className="card">
-            <label className="label">
-              Their name
-            </label>
-            <input
-              className="input"
-              type="text"
-              placeholder="Enter their name"
-              value={exName}
-              onChange={(e) => setExName(e.target.value)}
-            />
-            <label className="label">
-              WhatsApp chat
-            </label>
-            <label className="upload">
-              <input
-                type="file"
-                accept=".txt"
-                onChange={handleFile}
-              />
-              <span className="uploadIcon">
-                📄
-              </span>
-              <span>
-                {chatText
-                  ? "Chat file selected ✓"
-                  : "Upload WhatsApp .txt file"}
-              </span>
-            </label>
-            {chatText && (
-              <div className="fileStatus">
-                {chatText.length.toLocaleString()} characters loaded
-              </div>
-            )}
-            {error && (
-              <div className="error">
-                {error}
-              </div>
-            )}
-            <button
-              className="primaryButton"
-              onClick={analyze}
-              disabled={loading}
-            >
-              {loading
-                ? "Analyzing..."
-                : "Analyze Conversation →"}
-            </button>
-          </div>
-          <p className="privacy">
-            🔒 Your original chat is not displayed publicly.
-          </p>
-        </div>
-      </div>
-    );
-  }
-  // =========================
-  // RESULT SCREEN
-  // =========================
-  if (screen === "result") {
-    return (
-      <div className="app">
-        <div className="container resultContainer">
-          <button
-            className="backButton"
-            onClick={() => setScreen("home")}
-          >
-            ← Back
-          </button>
-          <div className="logo">
-            CHAT<span>BACK</span>
-          </div>
-          <div className="resultCard">
-            <div className="resultTitle">
-              <div className="resultAvatar">
-                {(exName.trim()[0] || "?").toUpperCase()}
-              </div>
-              <div>
-                <h2>{exName}</h2>
-                <p>Conversation Analysis</p>
-              </div>
-            </div>
-            <div className="analysis">
-              {result}
-            </div>
-            <button
-              className="chatButton"
-              onClick={openChat}
-            >
-              💬 Chat with {exName}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+
   // =========================
   // CHAT SCREEN
   // =========================
-  return (
-    <div className="chatPage">
-      <div className="chatHeader">
-        <button
-          className="chatBack"
-          onClick={() => setScreen("result")}
-        >
-          ←
-        </button>
-        <div className="chatAvatar">
-          {(exName.trim()[0] || "?").toUpperCase()}
-        </div>
-        <div className="chatPerson">
-          <strong>{exName}</strong>
-          <span>
-            AI simulation • Not the real person
-          </span>
-        </div>
-      </div>
-      <div className="chatNotice">
-        This is an AI simulation based on the communication
-        style found in the uploaded chat.
-      </div>
-      <div className="chatMessages">
-        {messages.map((msg, index) => (
-          <div
-            key={index}
-            className={`chatRow ${
-              msg.role === "user"
-                ? "userRow"
-                : "aiRow"
-            }`}
+
+  if (screen === "chat") {
+    return (
+      <main className="chatPage">
+
+        <header className="chatHeader">
+
+          <button
+            className="chatBack"
+            onClick={() => setScreen("home")}
           >
-            <div
-              className={`chatBubble ${
-                msg.role === "user"
-                  ? "userBubble"
-                  : "aiBubble"
-              }`}
-            >
-              {msg.text}
-              <span className="chatTime">
-                {new Date().toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit"
-                })}
-              </span>
-            </div>
+            ←
+          </button>
+
+          <div className="chatAvatar">
+            {exName.charAt(0).toUpperCase()}
           </div>
-        ))}
-        {chatLoading && (
-          <div className="chatRow aiRow">
-            <div className="chatBubble aiBubble typing">
-              typing...
+
+          <div className="chatPerson">
+            <strong>{exName}</strong>
+            <span>
+              CHATBACK AI · Simulation
+            </span>
+          </div>
+
+        </header>
+
+        <div className="chatNotice">
+          ⚠️ This is an AI simulation based on
+          communication patterns. It is not the real person.
+        </div>
+
+        <section className="chatMessages">
+
+          {messages.map((msg, index) => (
+            <div
+              key={index}
+              className={
+                msg.role === "user"
+                  ? "chatRow userRow"
+                  : "chatRow aiRow"
+              }
+            >
+              <div
+                className={
+                  msg.role === "user"
+                    ? "chatBubble userBubble"
+                    : "chatBubble aiBubble"
+                }
+              >
+                {msg.text}
+
+                <span className="chatTime">
+                  {new Date().toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit"
+                  })}
+                </span>
+              </div>
             </div>
+          ))}
+
+          {chatLoading && (
+            <div className="chatRow aiRow">
+              <div className="chatBubble aiBubble typing">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+          )}
+
+        </section>
+
+        <div className="chatInputBar">
+
+          <textarea
+            value={chatInput}
+            onChange={(e) =>
+              setChatInput(e.target.value)
+            }
+            onKeyDown={handleChatKeyDown}
+            placeholder={`Message ${exName}...`}
+            rows={1}
+          />
+
+          <button
+            onClick={sendChatMessage}
+            disabled={
+              !chatInput.trim() ||
+              chatLoading
+            }
+          >
+            ➤
+          </button>
+
+        </div>
+
+      </main>
+    );
+  }
+
+  // =========================
+  // ORIGINAL HOME SCREEN
+  // =========================
+
+  return (
+    <main className="page">
+
+      <nav className="nav">
+
+        <div className="brand">
+          <span>♥</span> CHATBACK
+        </div>
+
+        <button
+          className="ghost"
+          onClick={loadDemo}
+        >
+          Try Demo
+        </button>
+
+      </nav>
+
+      <section className="hero">
+
+        <div className="badge">
+          AI RELATIONSHIP ANALYZER
+        </div>
+
+        <h1>
+          What does your
+          <br />
+          <em>chat</em> really mean?
+        </h1>
+
+        <p className="sub">
+          Upload your WhatsApp conversation and
+          discover communication patterns,
+          emotional signals and relationship insights.
+        </p>
+
+      </section>
+
+      <section className="card">
+
+        <label>
+          1. WHO ARE YOU ANALYZING?
+        </label>
+
+        <input
+          value={exName}
+          onChange={(e) =>
+            setExName(e.target.value)
+          }
+          placeholder="Enter their name"
+          maxLength={80}
+        />
+
+        <label>
+          2. YOUR WHATSAPP CHAT
+        </label>
+
+        <div className="upload">
+
+          <input
+            id="file"
+            type="file"
+            accept=".txt,text/plain"
+            onChange={handleFile}
+          />
+
+          <label
+            htmlFor="file"
+            className="uploadButton"
+          >
+            Upload .txt
+          </label>
+
+          <span>
+            or paste your exported WhatsApp
+            chat below
+          </span>
+
+        </div>
+
+        <textarea
+          value={chatText}
+          onChange={(e) =>
+            setChatText(e.target.value)
+          }
+          placeholder="Paste your WhatsApp exported chat here..."
+        />
+
+        {error && (
+          <div className="error">
+            {error}
           </div>
         )}
-      </div>
-      <div className="chatInputBar">
-        <textarea
-          value={chatInput}
-          onChange={(e) => setChatInput(e.target.value)}
-          onKeyDown={handleChatKeyDown}
-          placeholder={`Message ${exName}...`}
-          rows={1}
-          disabled={chatLoading}
-        />
+
         <button
-          onClick={sendChatMessage}
-          disabled={
-            chatLoading ||
-            !chatInput.trim()
-          }
+          className="primary"
+          disabled={!canAnalyze || loading}
+          onClick={() => analyze(false)}
         >
-          ➤
+          {loading
+            ? "ANALYZING..."
+            : "♥  ANALYZE FOR FREE"}
         </button>
-      </div>
-    </div>
+
+        <p className="privacy">
+          Your API key stays on the Vercel server.
+          Don't upload sensitive information you
+          don't want analyzed.
+        </p>
+
+      </section>
+
+      {result && (
+        <section className="result card">
+
+          <div className="resultTop">
+
+            <div>
+
+              <div className="badge">
+                CHATBACK RESULT
+              </div>
+
+              <h2>
+                {premium
+                  ? "Your Full Analysis"
+                  : "Your Basic Analysis"}
+              </h2>
+
+            </div>
+
+            <div className="scoreDot">
+              ♥
+            </div>
+
+          </div>
+
+          <div className="resultText">
+            {result}
+          </div>
+
+          {/* CHAT BUTTON */}
+
+          <button
+            className="chatWithButton"
+            onClick={openChat}
+          >
+            💬 Chat with{" "}
+            <strong>{exName}</strong>
+          </button>
+
+          {!premium && !paid && (
+
+            <div className="premium">
+
+              <div>
+
+                <div className="badge">
+                  PREMIUM
+                </div>
+
+                <h3>
+                  Want the full story?
+                </h3>
+
+                <p>
+                  Unlock emotional investment,
+                  red flags, green flags,
+                  compatibility and suggested replies.
+                </p>
+
+              </div>
+
+              <button
+                className="premiumButton"
+                onClick={unlockPremium}
+              >
+                Unlock — ₹49
+              </button>
+
+            </div>
+
+          )}
+
+        </section>
+      )}
+
+      <footer>
+        CHATBACK · AI-generated insights are
+        patterns, not certainty.
+      </footer>
+
+    </main>
   );
 }
