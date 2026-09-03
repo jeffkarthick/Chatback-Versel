@@ -8,11 +8,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { exName, chatText, premium = false } = req.body || {};
-
-    // --------------------------------------------------
-    // BASIC VALIDATION
-    // --------------------------------------------------
+    const { exName, chatText } = req.body || {};
 
     if (!chatText || String(chatText).trim().length < 20) {
       return res.status(400).json({
@@ -36,19 +32,17 @@ export default async function handler(req, res) {
       });
     }
 
-    // --------------------------------------------------
-    // REDIS HELPERS
-    // --------------------------------------------------
+    // ---------------------------------------
+    // UPSTASH REDIS
+    // ---------------------------------------
 
     async function redisCommand(command) {
       const response = await fetch(redisUrl, {
         method: "POST",
-
         headers: {
           Authorization: `Bearer ${redisToken}`,
           "Content-Type": "application/json"
         },
-
         body: JSON.stringify(command)
       });
 
@@ -63,285 +57,347 @@ export default async function handler(req, res) {
       return data?.result;
     }
 
-    // --------------------------------------------------
-    // CREATE UNIQUE HASH FOR CHAT
-    // --------------------------------------------------
+    // ---------------------------------------
+    // CLEAN CHAT
+    // ---------------------------------------
 
-    const cleanChat = String(chatText).trim();
+    const cleanChat = String(chatText)
+      .replace(/\r/g, "")
+      .trim();
+
+    // ---------------------------------------
+    // CREATE CHAT HASH
+    // ---------------------------------------
 
     const chatHash = crypto
       .createHash("sha256")
       .update(cleanChat)
       .digest("hex");
 
-    const cacheKey = `chatback:${chatHash}:${premium ? "premium" : "free"}`;
+    const cacheKey = `chatback:free:${chatHash}`;
 
-    // --------------------------------------------------
+    // ---------------------------------------
     // CHECK CACHE
-    // --------------------------------------------------
+    // ---------------------------------------
 
-    const savedResult = await redisCommand([
+    const cachedResult = await redisCommand([
       "GET",
       cacheKey
     ]);
 
-    if (savedResult) {
+    if (cachedResult) {
       return res.status(200).json({
         success: true,
-        result: savedResult,
+        result: cachedResult,
         cached: true
       });
     }
 
-    // --------------------------------------------------
-    // GROQ FUNCTION
-    // --------------------------------------------------
+    // ---------------------------------------
+    // SMART CHAT COMPRESSION
+    // ---------------------------------------
 
-    async function askGroq(prompt, maxTokens = 500) {
-      const response = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
+    function smartCompressChat(text) {
+      const MAX_CHARS = 10000;
 
-          headers: {
-            Authorization: `Bearer ${groqKey}`,
-            "Content-Type": "application/json"
-          },
+      if (text.length <= MAX_CHARS) {
+        return text;
+      }
 
-          body: JSON.stringify({
-            model: "openai/gpt-oss-20b",
+      let lines = text
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
 
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are CHATBACK, a concise WhatsApp relationship chat analyzer. Analyze only the provided text. Never claim certainty about private feelings."
-              },
-              {
-                role: "user",
-                content: prompt
-              }
-            ],
+      // Remove common WhatsApp system/media lines
+      lines = lines.filter(line => {
+        const lower = line.toLowerCase();
 
-            temperature: 0.5,
-            max_tokens: maxTokens
-          })
+        if (
+          lower.includes("messages and calls are end-to-end encrypted")
+        ) {
+          return false;
         }
-      );
 
-      const data = await response.json();
+        if (
+          lower.includes("<media omitted>")
+        ) {
+          return false;
+        }
 
-      if (!response.ok) {
-        console.error("Groq error:", data);
+        if (
+          lower.includes("image omitted")
+        ) {
+          return false;
+        }
 
-        throw new Error(
-          data?.error?.message ||
-            "Groq request failed."
-        );
-      }
+        if (
+          lower.includes("video omitted")
+        ) {
+          return false;
+        }
 
-      return (
-        data?.choices?.[0]?.message?.content || ""
-      );
-    }
+        if (
+          lower.includes("audio omitted")
+        ) {
+          return false;
+        }
 
-    // --------------------------------------------------
-    // SPLIT CHAT
-    // --------------------------------------------------
+        if (
+          lower.includes("sticker omitted")
+        ) {
+          return false;
+        }
 
-    // Small chunks so we stay safely under 8K TPM.
-    const CHUNK_SIZE = 2200;
-
-    const chunks = [];
-
-    for (
-      let i = 0;
-      i < cleanChat.length;
-      i += CHUNK_SIZE
-    ) {
-      chunks.push(
-        cleanChat.slice(i, i + CHUNK_SIZE)
-      );
-    }
-
-    // Maximum chunks per request.
-    // This protects Vercel from extremely large chats.
-    const MAX_CHUNKS = 8;
-
-    let selectedChunks = chunks.slice(
-      0,
-      MAX_CHUNKS
-    );
-
-    // If chat is very large, select parts from
-    // beginning, middle and end instead of only
-    // taking the beginning.
-    if (chunks.length > MAX_CHUNKS) {
-      const indexes = [];
-
-      for (let i = 0; i < MAX_CHUNKS; i++) {
-        const index = Math.floor(
-          (i * (chunks.length - 1)) /
-            (MAX_CHUNKS - 1)
-        );
-
-        indexes.push(index);
-      }
-
-      selectedChunks = indexes.map(
-        (index) => chunks[index]
-      );
-    }
-
-    // --------------------------------------------------
-    // ANALYZE EACH CHUNK
-    // --------------------------------------------------
-
-    const analyses = [];
-
-    for (
-      let i = 0;
-      i < selectedChunks.length;
-      i++
-    ) {
-      const chunk = selectedChunks[i];
-
-      const prompt = `
-Analyze PART ${i + 1} of a WhatsApp conversation.
-
-Person being analyzed:
-${exName || "Unknown"}
-
-Find only observable patterns from this part:
-
-- Who starts conversations
-- Who replies more
-- Emotional tone
-- Interest signals
-- Affection signals
-- Distance or avoidance
-- Positive communication signals
-- Negative communication signals
-
-Do not make a final relationship conclusion.
-
-Be very concise.
-
-PART ${i + 1}:
-
-${chunk}
-`;
-
-      const analysis = await askGroq(
-        prompt,
-        400
-      );
-
-      if (analysis) {
-        analyses.push(
-          `PART ${i + 1}:\n${analysis}`
-        );
-      }
-    }
-
-    if (analyses.length === 0) {
-      return res.status(502).json({
-        error: "AI returned an empty response."
+        return true;
       });
+
+      if (lines.length === 0) {
+        return text.slice(0, MAX_CHARS);
+      }
+
+      /*
+        Take messages from:
+        - beginning
+        - middle
+        - end
+
+        This keeps relationship history balanced.
+      */
+
+      const selected = [];
+
+      const firstCount = Math.floor(lines.length * 0.30);
+      const middleCount = Math.floor(lines.length * 0.40);
+      const lastCount = Math.floor(lines.length * 0.30);
+
+      // Beginning
+      for (let i = 0; i < firstCount; i++) {
+        selected.push(lines[i]);
+      }
+
+      // Middle
+      const middleStart = Math.floor(
+        (lines.length - middleCount) / 2
+      );
+
+      for (
+        let i = middleStart;
+        i < middleStart + middleCount;
+        i++
+      ) {
+        if (lines[i]) {
+          selected.push(lines[i]);
+        }
+      }
+
+      // End
+      for (
+        let i = Math.max(
+          0,
+          lines.length - lastCount
+        );
+        i < lines.length;
+        i++
+      ) {
+        selected.push(lines[i]);
+      }
+
+      // Remove duplicates
+      const uniqueLines = [
+        ...new Set(selected)
+      ];
+
+      let result = "";
+
+      for (const line of uniqueLines) {
+        if (
+          result.length + line.length + 1 >
+          MAX_CHARS
+        ) {
+          break;
+        }
+
+        result += line + "\n";
+      }
+
+      return `
+[CHAT COMPRESSED LOCALLY]
+
+The original WhatsApp chat was large.
+A representative sample was selected from the
+beginning, middle and end of the conversation.
+
+Do not assume missing parts of the conversation.
+
+${result}
+`;
     }
 
-    // --------------------------------------------------
-    // FINAL COMBINATION
-    // --------------------------------------------------
+    const compressedChat =
+      smartCompressChat(cleanChat);
 
-    const combined = analyses.join("\n\n");
+    // ---------------------------------------
+    // GROQ - ONLY ONE REQUEST
+    // ---------------------------------------
 
-    const finalPrompt = `
-You are CHATBACK.
-
-Create the final relationship analysis using
-the chat-part analyses below.
+    const prompt = `
+You are CHATBACK, an AI relationship chat analyzer.
 
 Person being analyzed:
 ${exName || "Unknown"}
 
-IMPORTANT:
+Analyze the WhatsApp conversation below.
 
+IMPORTANT RULES:
+
+- Analyze only what is visible in the conversation.
 - Never claim to know someone's private thoughts.
-- Say "the conversation suggests" instead of making certain claims.
-- Do not invent facts.
+- Never say something is 100% certain.
+- Use phrases like "the conversation suggests".
+- Do not invent events or facts.
 - If evidence is insufficient, say so.
-- Keep the answer clear and useful.
+- Be emotionally neutral.
+- Keep the answer easy to read.
 
 Provide:
 
-1. Relationship Summary
-2. Who appears to initiate more
-3. Emotional Tone
-4. Main Communication Pattern
-5. Overall Connection Score /100
+1. 💬 Relationship Summary
+Give a short summary of the overall communication.
 
-${
-  premium
-    ? `
-6. Who appears more emotionally invested and why
-7. Attachment Indicators
-8. Red Flags
-9. Green Flags
-10. Communication Compatibility
-11. Detailed Relationship Insight
-12. Suggested Next Reply
-13. Final Takeaway
-`
-    : ""
-}
+2. 📱 Who Initiates More
+Explain who appears to start conversations more often.
+
+3. ❤️ Emotional Tone
+Describe the overall emotional tone.
+
+4. 🔥 Interest Signals
+Mention signs of interest or engagement visible in the chat.
+
+5. 🚩 Red Flags
+Mention communication patterns that could be concerning.
+
+6. 💚 Green Flags
+Mention positive communication patterns.
+
+7. 🧠 Communication Pattern
+Explain how both people communicate with each other.
+
+8. 💯 Connection Score
+Give a score from 0-100 based only on the conversation.
+
+9. 🔍 Final Takeaway
+Give a short honest conclusion.
 
 Use headings and bullet points.
 
-CHAT PART ANALYSES:
+Do not make the response extremely long.
 
-${combined.slice(0, 9000)}
+WHATSAPP CHAT:
+
+${compressedChat}
 `;
 
-    const finalResult = await askGroq(
-      finalPrompt,
-      premium ? 1500 : 700
+    const groqResponse = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+
+        headers: {
+          Authorization: `Bearer ${groqKey}`,
+          "Content-Type": "application/json"
+        },
+
+        body: JSON.stringify({
+          model: "openai/gpt-oss-20b",
+
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are CHATBACK. Analyze WhatsApp conversations clearly, neutrally and concisely."
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+
+          temperature: 0.5,
+
+          max_tokens: 650
+        })
+      }
     );
 
-    if (!finalResult) {
-      return res.status(502).json({
-        error: "AI returned an empty final response."
+    const data = await groqResponse.json();
+
+    // ---------------------------------------
+    // GROQ ERROR
+    // ---------------------------------------
+
+    if (!groqResponse.ok) {
+      console.error(
+        "Groq Error:",
+        data
+      );
+
+      if (groqResponse.status === 429) {
+        return res.status(429).json({
+          error:
+            "AI is temporarily busy. Please try again in a few seconds."
+        });
+      }
+
+      return res.status(groqResponse.status).json({
+        error:
+          data?.error?.message ||
+          "Groq request failed."
       });
     }
 
-    // --------------------------------------------------
-    // SAVE FINAL RESULT
-    // --------------------------------------------------
+    // ---------------------------------------
+    // GET RESULT
+    // ---------------------------------------
 
-    // Save for 30 days.
-    // Same chat = no new Groq analysis.
+    const result =
+      data?.choices?.[0]?.message?.content;
+
+    if (!result) {
+      return res.status(502).json({
+        error:
+          "AI returned an empty response."
+      });
+    }
+
+    // ---------------------------------------
+    // SAVE RESULT
+    // 30 DAYS
+    // ---------------------------------------
+
     await redisCommand([
       "SET",
       cacheKey,
-      finalResult,
+      result,
       "EX",
       "2592000"
     ]);
 
-    // --------------------------------------------------
+    // ---------------------------------------
     // RESPONSE
-    // --------------------------------------------------
+    // ---------------------------------------
 
     return res.status(200).json({
       success: true,
-      result: finalResult,
-      cached: false,
-      chunksAnalyzed: selectedChunks.length,
-      totalChunks: chunks.length
+      result,
+      cached: false
     });
 
   } catch (error) {
-    console.error("CHATBACK ERROR:", error);
+    console.error(
+      "CHATBACK ERROR:",
+      error
+    );
 
     return res.status(500).json({
       error:
