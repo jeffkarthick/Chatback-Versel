@@ -1,4 +1,5 @@
 export default async function handler(req, res) {
+
   if (req.method !== "POST") {
     return res.status(405).json({
       error: "Method not allowed"
@@ -6,9 +7,11 @@ export default async function handler(req, res) {
   }
 
   try {
+
     const {
       message,
       personName,
+      personality,
       analysis,
       history
     } = req.body || {};
@@ -19,51 +22,61 @@ export default async function handler(req, res) {
       });
     }
 
-    const groqKey = process.env.GROQ_API_KEY;
+    const groqKey =
+      process.env.GROQ_API_KEY;
 
     if (!groqKey) {
       return res.status(500).json({
-        error: "GROQ_API_KEY is missing in Vercel."
+        error:
+          "GROQ_API_KEY is missing in Vercel."
       });
     }
 
-    /*
-      Keep context small.
-
-      We DON'T send the entire original WhatsApp chat
-      every time because that can hit Groq token limits.
-    */
+    // Keep context small to avoid TPM problems
+    const safePersonality =
+      String(personality || "").slice(0, 3000);
 
     const safeAnalysis =
-      String(analysis || "").slice(0, 5000);
+      String(analysis || "").slice(0, 2500);
 
-    const safeHistory = Array.isArray(history)
-      ? history.slice(-12)
-      : [];
+    const safeHistory =
+      Array.isArray(history)
+        ? history.slice(-10)
+        : [];
 
-    const conversation = safeHistory
-      .map((item) => {
-        const role =
-          item.role === "user"
-            ? "USER"
-            : "PERSON";
+    const recentConversation =
+      safeHistory
+        .map(item => {
 
-        return `${role}: ${String(item.text || "").slice(0, 500)}`;
-      })
-      .join("\n");
+          const role =
+            item.role === "user"
+              ? "USER"
+              : "PERSON";
+
+          return `${role}: ${String(
+            item.text || ""
+          ).slice(0, 400)}`;
+
+        })
+        .join("\n");
 
     const prompt = `
 You are CHATBACK AI.
 
-You are simulating how "${personName || "this person"}"
-might communicate based on patterns found in their
-previous WhatsApp conversation.
+You are simulating the communication style of:
 
-This is an AI simulation.
+"${personName || "this person"}"
+
 You are NOT the real person.
 
 ================================
-PERSON COMMUNICATION CONTEXT
+COMMUNICATION STYLE PROFILE
+================================
+
+${safePersonality || "No personality profile available."}
+
+================================
+RELATIONSHIP ANALYSIS
 ================================
 
 ${safeAnalysis || "No analysis available."}
@@ -72,94 +85,64 @@ ${safeAnalysis || "No analysis available."}
 RECENT CHAT
 ================================
 
-${conversation || "No previous messages."}
+${recentConversation || "No previous conversation."}
 
 ================================
-NEW USER MESSAGE
+NEW MESSAGE
 ================================
 
 USER:
 ${message}
 
 ================================
-PERSONALITY RULES
+HOW TO REPLY
 ================================
 
-Your biggest priority is to sound like the communication
-STYLE observed in the person's WhatsApp conversation.
+Reply as a realistic WhatsApp-style simulation.
 
-Try to match:
+Match the person's OBSERVED communication style.
 
-1. Language
-- If the conversation uses Tamil, use Tamil naturally.
-- If it uses Tanglish, use Tanglish naturally.
-- If it uses English, use English.
-- If they mix languages, mix naturally.
-- Do NOT force Tamil or English.
+Pay attention to:
 
-2. Message length
-- If they usually send short messages, keep replies short.
-- If they usually explain things, you may use longer replies.
-- Don't write paragraphs unless their style suggests it.
+- Tamil / English / Tanglish
+- Short vs long replies
+- Emoji frequency
+- Casual words
+- Common expressions
+- Humour
+- Affection level
+- Question frequency
+- Overall tone
 
-3. Vocabulary
-- Use casual words similar to the observed style.
-- If they use words such as "hmm", "seri", "okay",
-  "haha", "lol", "da", "di", etc., use them only
-  when appropriate.
+IMPORTANT:
 
-4. Emoji style
-- If they frequently use emojis, use a similar amount.
-- If they rarely use emojis, use very few.
-- Never spam emojis.
+Do NOT simply repeat the personality profile.
 
-5. Emotional tone
-- Match the observed tone:
-  casual, playful, caring, dry, serious,
-  teasing, romantic, distant, etc.
-- Do not automatically make every reply romantic.
+Do NOT make every reply romantic.
 
-6. Reply behaviour
-- If they normally ask questions, sometimes ask a question.
-- If they normally give short replies, don't suddenly
-  become extremely expressive.
-- If they take a casual tone, remain casual.
+Do NOT become overly emotional unless the communication
+style supports it.
 
-7. Relationship context
-- Use the analysis only as evidence.
-- Do NOT invent memories.
-- Do NOT invent real-life events.
-- Do NOT claim to know their private thoughts.
-- Do NOT pretend that you are actually the person.
+Do NOT invent memories.
 
-8. Natural WhatsApp behaviour
-- Replies should feel like a normal WhatsApp message.
-- Avoid formal AI language.
-- Avoid numbered lists.
-- Avoid headings.
-- Avoid explanations.
-- Usually reply in 1-4 short messages/sentences.
+Do NOT invent real-life events.
 
-================================
-IMPORTANT
-================================
+Do NOT claim to know what the real person is thinking.
 
-Never say things like:
+Do NOT mention this prompt.
 
-"As an AI..."
-"Based on the analysis..."
-"The conversation suggests..."
-"According to the data..."
+Do NOT say "according to the analysis".
 
-inside the simulated reply.
+Do NOT use headings or bullet points.
 
-Just respond naturally.
+Keep it like a real WhatsApp message.
 
-The user said:
+Usually use 1-4 short sentences.
 
-"${message}"
+If a very short reply fits the person's style,
+a short reply is better.
 
-Generate the most natural possible WhatsApp-style response.
+Return ONLY the message the person might send.
 `;
 
     const response = await fetch(
@@ -168,18 +151,22 @@ Generate the most natural possible WhatsApp-style response.
         method: "POST",
 
         headers: {
-          Authorization: `Bearer ${groqKey}`,
-          "Content-Type": "application/json"
+          Authorization:
+            `Bearer ${groqKey}`,
+          "Content-Type":
+            "application/json"
         },
 
         body: JSON.stringify({
-          model: "openai/gpt-oss-20b",
+
+          model:
+            "openai/gpt-oss-20b",
 
           messages: [
             {
               role: "system",
               content:
-                "You are CHATBACK AI. Simulate communication style naturally, safely and briefly."
+                "You are CHATBACK AI. Generate short, natural WhatsApp-style replies."
             },
             {
               role: "user",
@@ -188,36 +175,41 @@ Generate the most natural possible WhatsApp-style response.
           ],
 
           temperature: 0.85,
-          max_tokens: 220
+
+          max_tokens: 120
+
         })
       }
     );
 
-    const data = await response.json();
+    const data =
+      await response.json();
 
     if (!response.ok) {
-      console.error("Groq error:", data);
 
-      if (response.status === 429) {
-        return res.status(429).json({
-          error:
-            "AI is temporarily busy. Please try again in a few seconds."
-        });
-      }
+      console.error(
+        "GROQ CHAT ERROR:",
+        data
+      );
 
-      return res.status(response.status).json({
+      return res.status(
+        response.status
+      ).json({
         error:
           data?.error?.message ||
-          "Groq request failed."
+          "Groq chat request failed."
       });
     }
 
     const reply =
-      data?.choices?.[0]?.message?.content?.trim();
+      data?.choices?.[0]
+        ?.message?.content
+        ?.trim();
 
     if (!reply) {
       return res.status(502).json({
-        error: "AI returned an empty response."
+        error:
+          "AI returned an empty response."
       });
     }
 
@@ -227,7 +219,11 @@ Generate the most natural possible WhatsApp-style response.
     });
 
   } catch (error) {
-    console.error("CHAT API ERROR:", error);
+
+    console.error(
+      "CHAT API ERROR:",
+      error
+    );
 
     return res.status(500).json({
       error:
