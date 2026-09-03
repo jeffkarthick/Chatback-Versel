@@ -27,3 +27,253 @@ radius:15px;background:#180b10}.premium h3{margin:10px 0 6px;font-size:22px}.pre
 .chatWithButton:active {
   transform: scale(0.98);
 }
+/* =========================
+   CHAT SCREEN
+========================= */
+
+.chatPage {
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at top,
+      #241126 0%,
+      #090909 45%,
+      #050505 100%
+    );
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+}
+
+.chatHeader {
+  height: 70px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  background: rgba(10,10,10,.92);
+  backdrop-filter: blur(15px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.chatBack {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: white;
+  font-size: 28px;
+  cursor: pointer;
+}
+
+.chatAvatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg,#ff3b81,#7c3aed);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+.chatPerson {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chatPerson strong {
+  font-size: 16px;
+}
+
+.chatPerson span {
+  font-size: 11px;
+  color: #999;
+}
+
+.chatNotice {
+  margin: 12px auto;
+  max-width: 600px;
+  padding: 9px 14px;
+  border-radius: 12px;
+  background: rgba(255,193,7,.08);
+  border: 1px solid rgba(255,193,7,.12);
+  color: #bdbdbd;
+  font-size: 11px;
+  text-align: center;
+}
+
+.chatMessages {
+  flex: 1;
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 15px 16px 100px;
+  overflow-y: auto;
+}
+
+.chatRow {
+  display: flex;
+  margin: 9px 0;
+}
+
+.aiRow {
+  justify-content: flex-start;
+}
+
+.userRow {
+  justify-content: flex-end;
+}
+
+.chatBubble {
+  max-width: 78%;
+  padding: 11px 13px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.aiBubble {
+  background: #1d1d22;
+  border-bottom-left-radius: 5px;
+}
+
+.userBubble {
+  background: linear-gradient(
+    135deg,
+    #ff3b81,
+    #7c3aed
+  );
+  border-bottom-right-radius: 5px;
+}
+
+.chatTime {
+  display: block;
+  text-align: right;
+  margin-top: 5px;
+  font-size: 9px;
+  opacity: .55;
+}
+
+.chatInputBar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 14px;
+  background: rgba(5,5,5,.94);
+  backdrop-filter: blur(18px);
+  border-top: 1px solid rgba(255,255,255,.08);
+  display: flex;
+  gap: 10px;
+  z-index: 20;
+}
+
+.chatInputBar textarea {
+  flex: 1;
+  resize: none;
+  min-height: 44px;
+  max-height: 120px;
+  border: 1px solid #292929;
+  border-radius: 16px;
+  background: #151515;
+  color: white;
+  padding: 12px 14px;
+  outline: none;
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.chatInputBar textarea:focus {
+  border-color: #7c3aed;
+}
+
+.chatInputBar button {
+  width: 46px;
+  height: 46px;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    #ff3b81,
+    #7c3aed
+  );
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.chatInputBar button:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.typing {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 45px;
+}
+
+.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #aaa;
+  animation: typing 1.2s infinite;
+}
+
+.typing span:nth-child(2) {
+  animation-delay: .15s;
+}
+
+.typing span:nth-child(3) {
+  animation-delay: .3s;
+}
+
+@keyframes typing {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: .4;
+  }
+
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* RESULT CHAT BUTTON */
+
+.chatWithButton {
+  width: 100%;
+  margin-top: 20px;
+  padding: 15px 18px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(
+    135deg,
+    #ff3b81,
+    #7c3aed
+  );
+  color: white;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: .2s ease;
+}
+
+.chatWithButton:hover {
+  transform: translateY(-2px);
+}
+
+.chatWithButton:active {
+  transform: scale(.98);
+}
