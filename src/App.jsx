@@ -18,6 +18,7 @@ export default function App() {
   // CHAT SCREEN
   const [screen, setScreen] = useState("home");
   const [messages, setMessages] = useState([]);
+  const [personality, setPersonality] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
 
@@ -89,6 +90,7 @@ export default function App() {
       setResult(
         data.result || "No result returned."
       );
+      setPersonality(data.personality || "");
 
       setPremium(isPremium);
 
